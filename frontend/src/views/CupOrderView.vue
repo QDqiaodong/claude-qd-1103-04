@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { fmtMoney } from '../utils/money'
 
 const list = ref([])
 const failures = ref([])
@@ -79,7 +80,8 @@ function openCreate() {
 }
 
 function addItem() {
-  draft.items.push({ recipeId: recipes.value.length ? recipes.value[0].id : null, qty: 1 })
+  const first = recipes.value.find(r => r.priceStatus !== '异常')
+  draft.items.push({ recipeId: first ? first.id : null, qty: 1 })
 }
 
 function removeItem(idx) {
@@ -211,7 +213,9 @@ onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
       <el-table-column label="配方明细" min-width="180">
         <template #default="{ row }">{{ itemsText(row.items) }}</template>
       </el-table-column>
-      <el-table-column prop="total" label="金额" width="90" />
+      <el-table-column label="金额" width="90">
+        <template #default="{ row }">{{ fmtMoney(row.total) }}</template>
+      </el-table-column>
       <el-table-column label="积分" width="90">
         <template #default="{ row }">{{ row.memberId != null ? (row.pointsEarned ?? 0) : '—' }}</template>
       </el-table-column>
@@ -266,7 +270,13 @@ onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
           <div class="items">
             <div v-for="(it, idx) in draft.items" :key="idx" class="item-row">
               <el-select v-model="it.recipeId" style="width:260px">
-                <el-option v-for="r in recipes" :key="r.id" :label="r.name + '（¥' + r.price + '）'" :value="r.id" />
+                <el-option
+                  v-for="r in recipes"
+                  :key="r.id"
+                  :label="r.priceStatus === '异常' ? (r.name + '（售价异常，请先在配方页修正）') : (r.name + '（¥' + fmtMoney(r.price) + '）')"
+                  :value="r.id"
+                  :disabled="r.priceStatus === '异常'"
+                />
               </el-select>
               <el-input-number v-model="it.qty" :min="1" />
               <el-button link type="danger" @click="removeItem(idx)">删</el-button>
@@ -295,7 +305,7 @@ onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
               </el-table-column>
             </el-table>
             <div class="preview-foot">
-              <span>合计 ¥{{ preview.total }}</span>
+              <span>合计 ¥{{ fmtMoney(preview.total) }}</span>
               <span v-if="draft.memberId">预计积分 +{{ preview.pointsToEarn }}</span>
               <el-tag v-if="preview.feasible" type="success" size="small">库存满足，可出杯</el-tag>
             </div>

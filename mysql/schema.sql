@@ -44,11 +44,14 @@ CREATE TABLE ingredient (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------- 配方 ----------------
+-- price 规范口径为两位小数（应用层写入前统一校验并规范化）；
+-- 列宽放到 DECIMAL(12,4) 且允许 NULL，只为兼容历史遗留的多位小数/空售价数据，
+-- 读取时由应用层标记「异常」降级状态并附原始值，不在 SQL 层静默四舍五入。
 CREATE TABLE recipe (
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
     name       VARCHAR(64) NOT NULL UNIQUE COMMENT '配方名',
     base_tea   VARCHAR(64) NOT NULL COMMENT '茶底',
-    price      DECIMAL(10,2) NOT NULL COMMENT '售价',
+    price      DECIMAL(12,4) NULL COMMENT '售价（规范两位小数；历史遗留可能多位小数或 NULL，读取时降级标记）',
     created_at DATETIME    COMMENT '创建时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

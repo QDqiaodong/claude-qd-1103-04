@@ -6,9 +6,11 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.milktea.bar.common.BizException;
 import com.milktea.bar.common.Dict;
+import com.milktea.bar.common.PriceSupport;
 import com.milktea.bar.entity.Ingredient;
 import com.milktea.bar.entity.Recipe;
 import com.milktea.bar.repository.IngredientRepository;
@@ -25,8 +27,14 @@ public class RecipeService {
         this.ingredientRepository = ingredientRepository;
     }
 
+    /**
+     * 列表：合法售价统一规范化为两位小数返回；历史遗留的多位小数/空值
+     * 不静默四舍五入，标记 priceStatus=「异常」并附原始值说明（降级状态）。
+     */
     public List<Recipe> list() {
-        return recipeRepository.findAll();
+        List<Recipe> all = recipeRepository.findAll();
+        all.forEach(RecipeService::applyPriceReadState);
+        return all;
     }
 
     public Recipe create(Recipe input) {
@@ -39,9 +47,8 @@ public class RecipeService {
         if (input.baseTea == null || input.baseTea.isBlank()) {
             throw new BizException("茶底不能为空");
         }
-        if (input.price == null || input.price.compareTo(Dict.RECIPE_MIN_PRICE) < 0) {
-            throw new BizException("配方售价必须大于 0");
-        }
+        // 统一金额口径：空/零/负数/超两位小数/超上限都在这里得到稳定提示
+        BigDecimal price = PriceSupport.requireValidForWrite(input.price);
         if (input.toppings == null || input.toppings.isEmpty()) {
             throw new BizException("配方至少需要一种小料");
         }
@@ -50,14 +57,21 @@ public class RecipeService {
         Recipe saved = new Recipe();
         saved.name = input.name;
         saved.baseTea = input.baseTea;
-        saved.price = input.price;
+        saved.price = price;
         saved.toppings = new java.util.HashMap<>(input.toppings);
         saved.createdAt = LocalDateTime.now();
-        return recipeRepository.save(saved);
+        Recipe persisted = recipeRepository.save(saved);
+        applyPriceReadState(persisted);
+        return persisted;
     }
 
+    /**
+     * 编辑：先对配方行加写锁，在锁点最新数据基础上校验与落库，
+     * 快速连续/并发修改彼此串行，响应即最终持久化结果。
+     */
+    @Transactional(rollbackFor = Exception.class)
     public Recipe update(Long id, Recipe input) {
-        Recipe existing = recipeRepository.findById(id)
+        Recipe existing = recipeRepository.findByIdForUpdate(id)
             .orElseThrow(() -> new BizException("配方不存在：" + id));
         if (input.name != null && !input.name.equals(existing.name)) {
             if (recipeRepository.existsByNameAndIdNot(input.name, id)) {
@@ -69,17 +83,32 @@ public class RecipeService {
             existing.baseTea = input.baseTea;
         }
         if (input.price != null) {
-            if (input.price.compareTo(Dict.RECIPE_MIN_PRICE) < 0) {
-                throw new BizException("配方售价必须大于 0");
-            }
-            existing.price = input.price;
+            existing.price = PriceSupport.requireValidForWrite(input.price);
         }
         if (input.toppings != null) {
             validateToppings(input.toppings);
             existing.toppings.clear();
             existing.toppings.putAll(input.toppings);
         }
-        return recipeRepository.save(existing);
+        Recipe persisted = recipeRepository.save(existing);
+        applyPriceReadState(persisted);
+        return persisted;
+    }
+
+    /**
+     * 读取口径：合法售价规范化为 scale=2（与落库值一致）；异常值保留原始值，
+     * 置 priceStatus=「异常」+ priceIssue 说明，绝不静默四舍五入。
+     */
+    static void applyPriceReadState(Recipe recipe) {
+        BigDecimal normalized = PriceSupport.normalizeOnRead(recipe.price);
+        if (normalized != null) {
+            recipe.price = normalized;
+            recipe.priceStatus = PriceSupport.STATUS_OK;
+            recipe.priceIssue = null;
+        } else {
+            recipe.priceStatus = PriceSupport.STATUS_ABNORMAL;
+            recipe.priceIssue = PriceSupport.issueOf(recipe.price);
+        }
     }
 
     /**

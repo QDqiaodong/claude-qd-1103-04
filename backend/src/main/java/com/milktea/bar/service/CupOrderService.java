@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.milktea.bar.common.BizException;
 import com.milktea.bar.common.Dict;
+import com.milktea.bar.common.PriceSupport;
 import com.milktea.bar.dto.CupOrderCreateRequest;
 import com.milktea.bar.dto.CupOrderCreateRequest.CupOrderItemInput;
 import com.milktea.bar.dto.CupOrderPreview;
@@ -305,7 +306,9 @@ public class CupOrderService {
             }
         }
 
-        // 2) 解析配方：失效配方记问题、不参与需求；有效配方累加金额与原料需求
+        // 2) 解析配方：失效配方记问题、不参与需求；有效配方累加金额与原料需求。
+        //    售价按统一读取口径判定：历史遗留的异常售价（多位小数/空值/越界）
+        //    不静默四舍五入、不参与金额计算，记为整单问题，提示先修正配方。
         Map<Long, Recipe> recipeCache = new LinkedHashMap<>();
         for (Long recipeId : plan.recipeCups.keySet()) {
             Recipe recipe = recipeRepository.findById(recipeId).orElse(null);
@@ -315,7 +318,13 @@ public class CupOrderService {
             }
             recipeCache.put(recipeId, recipe);
             int cups = plan.recipeCups.get(recipeId);
-            plan.total = plan.total.add(recipe.price.multiply(BigDecimal.valueOf(cups)));
+            BigDecimal unitPrice = PriceSupport.normalizeOnRead(recipe.price);
+            if (unitPrice == null) {
+                plan.problems.add("配方「" + recipe.name + "」售价数据异常（"
+                        + PriceSupport.issueOf(recipe.price) + "），请先在配方管理中修正后再出杯");
+            } else {
+                plan.total = plan.total.add(unitPrice.multiply(BigDecimal.valueOf(cups)));
+            }
             plan.need(recipe.baseTea, Dict.BASE_TEA_PER_CUP * cups);
             for (Map.Entry<String, Integer> t : recipe.toppings.entrySet()) {
                 Integer perCup = t.getValue();
@@ -410,7 +419,8 @@ public class CupOrderService {
         final Map<Long, Integer> recipeCups = new LinkedHashMap<>();
         /** 原料名 -> 合并需求（TreeMap 按名排序，输出稳定） */
         final Map<String, MergedLine> needByName = new TreeMap<>();
-        BigDecimal total = BigDecimal.ZERO;
+        /** 金额合计：初始即两位小数，累加的都是规范化后的两位小数售价 */
+        BigDecimal total = new BigDecimal("0.00");
         Member member;
         String requestItems = "";
         final List<String> problems = new ArrayList<>();

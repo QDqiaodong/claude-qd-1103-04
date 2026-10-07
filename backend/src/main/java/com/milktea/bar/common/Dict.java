@@ -94,8 +94,14 @@ public final class Dict {
     public static final int POINTS_PER_YUAN = 1;
 
     // ---------------- 配方 recipe ----------------
-    /** 配方售价下限：必须大于该值（0.01 元） */
+    /** 配方售价下限：必须大于等于该值（0.01 元） */
     public static final BigDecimal RECIPE_MIN_PRICE = new BigDecimal("0.01");
+
+    /** 配方售价上限：99999999.99 元（与金额列容量对齐，超出给稳定提示而不是数据库报错） */
+    public static final BigDecimal RECIPE_MAX_PRICE = new BigDecimal("99999999.99");
+
+    /** 配方售价统一精度：两位小数 */
+    public static final int RECIPE_PRICE_SCALE = 2;
 
     /** 每出一杯固定消耗的茶底量（茶底用量未在配方中配置，按此统一口径扣减） */
     public static final int BASE_TEA_PER_CUP = 10;

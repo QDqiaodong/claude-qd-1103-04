@@ -15,6 +15,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.MapKeyColumn;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
 
 /**
@@ -37,8 +38,21 @@ public class Recipe {
     @Column(name = "base_tea", nullable = false, length = 64)
     public String baseTea;
 
-    @Column(nullable = false, precision = 10, scale = 2)
+    /**
+     * 售价：规范口径为两位小数（写入时经 PriceSupport 校验并规范化）。
+     * 列宽放到 DECIMAL(12,4) 且允许 NULL，只为兼容历史遗留的多位小数/空值数据；
+     * 读取时合法值规范化为两位小数返回，异常值标记 priceStatus=「异常」降级展示。
+     */
+    @Column(precision = 12, scale = 4)
     public BigDecimal price;
+
+    /** 售价状态：正常 / 异常（读取时由服务端判定填充，不持久化） */
+    @Transient
+    public String priceStatus;
+
+    /** 售价异常说明（priceStatus=「异常」时给出，含原始值），不持久化 */
+    @Transient
+    public String priceIssue;
 
     @ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
     @CollectionTable(name = "recipe_topping", joinColumns = @JoinColumn(name = "recipe_id"))

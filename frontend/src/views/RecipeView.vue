@@ -2,13 +2,15 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { fmtMoney, priceProblem, recipePriceLabel } from '../utils/money'
 
 const recipes = ref([])
 const toppingOptions = ref([])   // 启用的「小料」原料
 const checked = ref([])          // 勾选的小料名
 const drawerVisible = ref(false)
 const editing = ref(false)
-const form = reactive({ id: null, name: '', baseTea: '', price: 12 })
+const submitting = ref(false)    // 防重复点击：提交中禁用确认按钮
+const form = reactive({ id: null, name: '', baseTea: '', price: '12.00' })
 const draftQty = reactive({})    // 小料名 -> 份数
 
 async function load() {
@@ -24,7 +26,7 @@ function resetForm() {
   form.id = null
   form.name = ''
   form.baseTea = ''
-  form.price = 12
+  form.price = '12.00'
   checked.value = []
   for (const k in draftQty) delete draftQty[k]
 }
@@ -40,7 +42,9 @@ function openEdit(row) {
   form.id = row.id
   form.name = row.name
   form.baseTea = row.baseTea
-  form.price = row.price
+  // 旧数据回显：异常售价原样回填（不静默四舍五入），正常售价显示两位小数规范值
+  const label = recipePriceLabel(row)
+  form.price = label.abnormal ? (row.price == null ? '' : String(row.price)) : label.text
   checked.value = Object.keys(row.toppings || {})
   for (const k in draftQty) delete draftQty[k]
   Object.entries(row.toppings || {}).forEach(([k, v]) => { draftQty[k] = v })
@@ -52,10 +56,12 @@ function onCheck(name, val) {
 }
 
 async function submitDrawer() {
+  if (submitting.value) return   // 重复点击只受理一次
   try {
     if (!form.name) throw new Error('请填写配方名')
     if (!form.baseTea) throw new Error('请填写茶底')
-    if (!form.price || form.price <= 0) throw new Error('售价必须大于 0')
+    const priceErr = priceProblem(form.price)
+    if (priceErr) throw new Error(priceErr)
     if (!checked.value.length) throw new Error('请至少勾选一种小料')
     const toppings = {}
     for (const name of checked.value) {
@@ -63,7 +69,9 @@ async function submitDrawer() {
       if (!q || q <= 0) throw new Error('小料「' + name + '」的份数必须大于 0')
       toppings[name] = q
     }
-    const payload = { name: form.name, baseTea: form.baseTea, price: form.price, toppings }
+    // 售价按用户输入原文提交，由服务端统一校验并规范化（前端不静默改写）
+    const payload = { name: form.name, baseTea: form.baseTea, price: String(form.price).trim(), toppings }
+    submitting.value = true
     if (editing.value) {
       await api.updateRecipe(form.id, payload)
       ElMessage.success('已更新配方')
@@ -72,10 +80,13 @@ async function submitDrawer() {
       ElMessage.success('已生成配方')
     }
     drawerVisible.value = false
-    await load()
+    await load()   // 重新载入后列表展示服务端规范化后的售价
     emit('changed')
   } catch (e) {
+    // 失败时抽屉保持打开、用户输入原样保留，错误提示来自服务端稳定文案
     ElMessage.error(e.message)
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -112,7 +123,14 @@ onMounted(load)
           <el-table-column prop="id" label="ID" width="70" />
           <el-table-column prop="name" label="配方名" />
           <el-table-column prop="baseTea" label="茶底" width="100" />
-          <el-table-column prop="price" label="售价" width="90" />
+          <el-table-column label="售价" width="120">
+            <template #default="{ row }">
+              <el-tooltip v-if="row.priceStatus === '异常'" :content="row.priceIssue" placement="top">
+                <span class="price-abnormal">{{ row.price ?? '—' }} ⚠ 异常</span>
+              </el-tooltip>
+              <span v-else>¥{{ fmtMoney(row.price) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="小料用量">
             <template #default="{ row }">
               <el-tag v-for="(q, n) in row.toppings" :key="n" class="tp-tag" size="small">
@@ -140,7 +158,7 @@ onMounted(load)
           <el-input v-model="form.baseTea" placeholder="如 红茶" />
         </el-form-item>
         <el-form-item label="售价">
-          <el-input-number v-model="form.price" :min="0.01" :step="0.5" :precision="2" />
+          <el-input v-model="form.price" placeholder="如 12.50（0.01 ~ 99999999.99，最多两位小数）" />
         </el-form-item>
         <el-form-item label="小料份数">
           <div v-if="checked.length" class="qty-list">
@@ -154,7 +172,7 @@ onMounted(load)
       </el-form>
       <template #footer>
         <el-button @click="drawerVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitDrawer">确认生成</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitDrawer">确认生成</el-button>
       </template>
     </el-drawer>
   </div>
@@ -174,4 +192,5 @@ onMounted(load)
 .qty-list { display: flex; flex-direction: column; gap: 10px; }
 .qty-row { display: flex; align-items: center; justify-content: space-between; }
 .qty-name { font-weight: 500; }
+.price-abnormal { color: #c4563a; font-weight: 600; cursor: help; }
 </style>
