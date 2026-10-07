@@ -1,0 +1,29 @@
+:root {
+  /* 焦糖主色 —— 奶茶饮品店主题 */
+  --primary: #C0703D;
+  --primary-deep: #9A5A30;
+  --primary-soft: #DEB68F;
+  --primary-wash: #F7EBD9;
+  --ink: #4a3b30;
+  --muted: #9b8675;
+  --line: #ecdfd2;
+  --bg: #fbf4ee;
+
+  --el-color-primary: #C0703D;
+  --el-color-primary-light-3: #D29A6E;
+  --el-color-primary-light-5: #DEB68F;
+  --el-color-primary-light-7: #EBCDB0;
+  --el-color-primary-light-8: #F1DBC4;
+  --el-color-primary-light-9: #F7EBD9;
+  --el-color-primary-dark-2: #9A5A30;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
