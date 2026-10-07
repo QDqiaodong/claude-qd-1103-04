@@ -31,6 +31,7 @@ export default {
 
   // ---------------- 配方 ----------------
   listRecipes: () => call(http.get('/recipes')),
+  getRecipe: (id) => call(http.get(`/recipes/${id}`)),
   createRecipe: (d) => call(http.post('/recipes', d)),
   updateRecipe: (id, d) => call(http.put(`/recipes/${id}`, d)),
 

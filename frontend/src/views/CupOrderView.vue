@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '../api'
+import { formatMoney } from '../utils/money'
 
 const list = ref([])
 const failures = ref([])
@@ -19,8 +20,10 @@ const draft = reactive({ memberId: null, payType: '微信', items: [] })
 const preview = ref(null)
 const previewLoading = ref(false)
 let previewTimer = null
+let previewSeq = 0   // 预览请求序号：快速连续修改明细时只采用最后一次响应，杜绝旧预览覆盖新结果
 
 const refundingId = ref(null)
+let loadSeq = 0     // 列表读取序号：连续操作触发的多次刷新只认最新响应
 
 const recipeMap = computed(() => {
   const m = {}
@@ -34,12 +37,14 @@ const memberMap = computed(() => {
 })
 
 async function load() {
+  const seq = ++loadSeq
   const [ords, fails, recs, mems] = await Promise.all([
     api.listCupOrders(filter.status || undefined),
     api.listCupOrderFailures(),
     api.listRecipes(),
     api.listMembers()
   ])
+  if (seq !== loadSeq) return // 连续操作触发多次刷新时丢弃过期响应，最终状态只以最新一次为准
   list.value = ords
   failures.value = fails
   recipes.value = recs
@@ -79,7 +84,9 @@ function openCreate() {
 }
 
 function addItem() {
-  draft.items.push({ recipeId: recipes.value.length ? recipes.value[0].id : null, qty: 1 })
+  // 默认选第一个价格规范的可售配方（历史遗留异常价配方不可下单）
+  const firstOk = recipes.value.find(r => r.priceStatus === 'ok')
+  draft.items.push({ recipeId: firstOk ? firstOk.id : (recipes.value[0]?.id ?? null), qty: 1 })
 }
 
 function removeItem(idx) {
@@ -98,23 +105,27 @@ async function fetchPreview() {
     preview.value = null
     return
   }
+  const seq = ++previewSeq
   previewLoading.value = true
   try {
-    preview.value = await api.previewCupOrder({
+    const result = await api.previewCupOrder({
       memberId: draft.memberId,
       payType: draft.payType,
       items: draft.items.map(it => ({ recipeId: it.recipeId, qty: it.qty }))
     })
+    // 快速连续修改时，旧请求晚返回也不允许覆盖新结果
+    if (seq === previewSeq) preview.value = result
   } catch (e) {
-    preview.value = null
+    if (seq === previewSeq) preview.value = null
   } finally {
-    previewLoading.value = false
+    if (seq === previewSeq) previewLoading.value = false
   }
 }
 
 const submitLoading = ref(false)
 
 async function submit() {
+  if (submitLoading.value) return // 重复点击 / 快速连点：在途提交直接忽略，避免重复下单
   try {
     if (!draft.items.length) {
       ElMessage.warning('请至少添加一种配方')
@@ -124,7 +135,8 @@ async function submit() {
       ElMessage.warning('配方明细不合法')
       return
     }
-    // 再次以服务端最新库存为准做一次预览，避免停留期间库存变化
+    submitLoading.value = true
+    // 再次以服务端最新库存/最新价格为准做一次预览，避免停留期间库存或配方变化
     const latest = await api.previewCupOrder({
       memberId: draft.memberId,
       payType: draft.payType,
@@ -135,7 +147,6 @@ async function submit() {
       preview.value = latest
       return
     }
-    submitLoading.value = true
     const payload = {
       memberId: draft.memberId,
       payType: draft.payType,
@@ -211,7 +222,9 @@ onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
       <el-table-column label="配方明细" min-width="180">
         <template #default="{ row }">{{ itemsText(row.items) }}</template>
       </el-table-column>
-      <el-table-column prop="total" label="金额" width="90" />
+      <el-table-column label="金额" width="90">
+        <template #default="{ row }">¥{{ formatMoney(row.total) }}</template>
+      </el-table-column>
       <el-table-column label="积分" width="90">
         <template #default="{ row }">{{ row.memberId != null ? (row.pointsEarned ?? 0) : '—' }}</template>
       </el-table-column>
@@ -265,8 +278,16 @@ onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
         <el-form-item label="配方明细">
           <div class="items">
             <div v-for="(it, idx) in draft.items" :key="idx" class="item-row">
-              <el-select v-model="it.recipeId" style="width:260px">
-                <el-option v-for="r in recipes" :key="r.id" :label="r.name + '（¥' + r.price + '）'" :value="r.id" />
+              <el-select v-model="it.recipeId" style="width:300px">
+                <el-option
+                  v-for="r in recipes"
+                  :key="r.id"
+                  :label="r.priceStatus === 'ok'
+                    ? r.name + '（¥' + formatMoney(r.price) + '）'
+                    : r.name + '（' + (r.priceRaw == null ? '空价格' : '¥' + String(r.priceRaw)) + '·价格待修复）'"
+                  :value="r.id"
+                  :disabled="r.priceStatus !== 'ok'"
+                />
               </el-select>
               <el-input-number v-model="it.qty" :min="1" />
               <el-button link type="danger" @click="removeItem(idx)">删</el-button>
@@ -295,8 +316,8 @@ onBeforeUnmount(() => { if (previewTimer) clearTimeout(previewTimer) })
               </el-table-column>
             </el-table>
             <div class="preview-foot">
-              <span>合计 ¥{{ preview.total }}</span>
-              <span v-if="draft.memberId">预计积分 +{{ preview.pointsToEarn }}</span>
+              <span>合计 ¥{{ formatMoney(preview.total) }}</span>
+              <span v-if="draft.memberId && preview.feasible">预计积分 +{{ preview.pointsToEarn }}</span>
               <el-tag v-if="preview.feasible" type="success" size="small">库存满足，可出杯</el-tag>
             </div>
             <div v-if="preview.problems && preview.problems.length" class="preview-problems">

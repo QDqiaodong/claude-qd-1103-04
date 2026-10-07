@@ -11,7 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.milktea.bar.common.ApiResponse;
-import com.milktea.bar.entity.Recipe;
+import com.milktea.bar.dto.RecipeDto;
+import com.milktea.bar.dto.RecipeSaveRequest;
 import com.milktea.bar.service.RecipeService;
 
 @RestController
@@ -25,17 +26,22 @@ public class RecipeController {
     }
 
     @GetMapping
-    public ApiResponse<List<Recipe>> list() {
+    public ApiResponse<List<RecipeDto>> list() {
         return ApiResponse.success(recipeService.list());
     }
 
+    @GetMapping("/{id}")
+    public ApiResponse<RecipeDto> get(@PathVariable Long id) {
+        return ApiResponse.success(recipeService.get(id));
+    }
+
     @PostMapping
-    public ApiResponse<Recipe> create(@RequestBody Recipe input) {
+    public ApiResponse<RecipeDto> create(@RequestBody RecipeSaveRequest input) {
         return ApiResponse.success(recipeService.create(input));
     }
 
     @PutMapping("/{id}")
-    public ApiResponse<Recipe> update(@PathVariable Long id, @RequestBody Recipe input) {
+    public ApiResponse<RecipeDto> update(@PathVariable Long id, @RequestBody RecipeSaveRequest input) {
         return ApiResponse.success(recipeService.update(id, input));
     }
 }

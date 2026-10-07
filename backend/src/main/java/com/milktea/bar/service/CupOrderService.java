@@ -14,10 +14,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.milktea.bar.common.BizException;
 import com.milktea.bar.common.Dict;
+import com.milktea.bar.common.Money;
 import com.milktea.bar.dto.CupOrderCreateRequest;
 import com.milktea.bar.dto.CupOrderCreateRequest.CupOrderItemInput;
 import com.milktea.bar.dto.CupOrderPreview;
 import com.milktea.bar.dto.CupOrderPreview.DemandLine;
+import com.milktea.bar.dto.RecipeDto;
 import com.milktea.bar.entity.CupOrder;
 import com.milktea.bar.entity.CupOrderFailure;
 import com.milktea.bar.entity.CupOrderItem;
@@ -79,7 +81,8 @@ public class CupOrderService {
         Plan plan = buildPlan(req, false);
 
         CupOrderPreview dto = new CupOrderPreview();
-        dto.total = plan.total;
+        // 合计口径与落库一致：只累加两位小数规范售价，合计本身就是两位小数，显式收口保证返回稳定
+        dto.total = Money.canonical(plan.total);
         dto.problems = plan.problems;
         dto.feasible = plan.problems.isEmpty();
         dto.pointsToEarn = (plan.member != null && dto.feasible)
@@ -159,7 +162,8 @@ public class CupOrderService {
         CupOrder order = new CupOrder();
         order.memberId = plan.memberId;
         order.payType = plan.payType;
-        order.total = plan.total;
+        // 合计按两位小数统一口径落库（参与计算的配方售价均已校验为两位小数）
+        order.total = Money.canonical(plan.total);
         order.status = "已出杯";
         order.pointsEarned = pointsEarned;
         order.createdAt = LocalDateTime.now();
@@ -305,7 +309,7 @@ public class CupOrderService {
             }
         }
 
-        // 2) 解析配方：失效配方记问题、不参与需求；有效配方累加金额与原料需求
+        // 2) 解析配方：失效配方/降级价格记问题、不参与金额；有效配方按规范售价累加金额与原料需求
         Map<Long, Recipe> recipeCache = new LinkedHashMap<>();
         for (Long recipeId : plan.recipeCups.keySet()) {
             Recipe recipe = recipeRepository.findById(recipeId).orElse(null);
@@ -315,7 +319,14 @@ public class CupOrderService {
             }
             recipeCache.put(recipeId, recipe);
             int cups = plan.recipeCups.get(recipeId);
-            plan.total = plan.total.add(recipe.price.multiply(BigDecimal.valueOf(cups)));
+            // 金额只认两位小数规范售价；历史遗留空/多位小数/非正价格显式降级、绝不静默取值或四舍五入
+            RecipeDto priceView = RecipeDto.of(recipe);
+            if (priceView.price == null) {
+                plan.problems.add("配方「" + recipe.name + "」" + priceView.priceNote
+                        + "，本单无法计价出杯");
+            } else {
+                plan.total = plan.total.add(priceView.price.multiply(BigDecimal.valueOf(cups)));
+            }
             plan.need(recipe.baseTea, Dict.BASE_TEA_PER_CUP * cups);
             for (Map.Entry<String, Integer> t : recipe.toppings.entrySet()) {
                 Integer perCup = t.getValue();

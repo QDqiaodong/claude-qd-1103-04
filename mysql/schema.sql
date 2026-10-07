@@ -44,11 +44,17 @@ CREATE TABLE ingredient (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------- 配方 ----------------
+-- price：规范售价 DECIMAL(10,2)，新写入一律两位小数；
+--        历史遗留空/多位小数/非正价格无法规范化时为 NULL（显式降级，不静默四舍五入）。
+-- price_raw：历史原始售价 DECIMAL(12,4)，仅供旧数据回显与降级提示，不参与金额计算。
+-- version：JPA 乐观锁版本，多页面交替编辑时过期提交以最新版本稳定拒绝。
 CREATE TABLE recipe (
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
     name       VARCHAR(64) NOT NULL UNIQUE COMMENT '配方名',
     base_tea   VARCHAR(64) NOT NULL COMMENT '茶底',
-    price      DECIMAL(10,2) NOT NULL COMMENT '售价',
+    price      DECIMAL(10,2) NULL COMMENT '规范售价（两位小数；历史遗留异常价为 NULL）',
+    price_raw  DECIMAL(12,4) NULL COMMENT '历史原始售价（仅回显，不参与计算）',
+    version    INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本',
     created_at DATETIME    COMMENT '创建时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -260,19 +266,25 @@ INSERT IGNORE INTO ingredient (name, category, stock, unit, status, created_at) 
 ('黑糖糖浆', '糖浆', 90, 'ml', '启用', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 50 DAY),
 ('蜂蜜',     '糖浆', 35, 'ml', '停用', UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 50 DAY);
 
-INSERT IGNORE INTO recipe (name, base_tea, price, created_at) VALUES
-('招牌珍珠奶茶', '红茶', 12.00, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 40 DAY),
-('椰果绿茶',     '绿茶', 11.00, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 40 DAY),
-('红豆乌龙',     '乌龙茶', 13.00, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 35 DAY),
-('双倍珍珠奶茶', '红茶', 15.00, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 35 DAY),
-('椰香红豆奶',   '绿茶', 12.00, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 30 DAY);
+-- 历史遗留异常价格演示：6 为多位小数（10.125），7 为空价格；二者 price 均为 NULL，
+-- 列表显式展示原始值与降级提示、不可出杯，需在编辑表单修复后才恢复规范两位小数价。
+INSERT IGNORE INTO recipe (id, name, base_tea, price, price_raw, version, created_at) VALUES
+(1, '招牌珍珠奶茶', '红茶', 12.00, 12.00, 0, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 40 DAY),
+(2, '椰果绿茶',     '绿茶', 11.00, 11.00, 0, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 40 DAY),
+(3, '红豆乌龙',     '乌龙茶', 13.00, 13.00, 0, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 35 DAY),
+(4, '双倍珍珠奶茶', '红茶', 15.00, 15.00, 0, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 35 DAY),
+(5, '椰香红豆奶',   '绿茶', 12.00, 12.00, 0, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 30 DAY),
+(6, '黑糖珍珠厚乳（历史价）', '红茶', NULL, 10.1250, 0, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 25 DAY),
+(7, '蜂蜜椰椰（历史空价）',   '绿茶', NULL, NULL,    0, UTC_TIMESTAMP() + INTERVAL 8 HOUR - INTERVAL 25 DAY);
 
 INSERT IGNORE INTO recipe_topping (recipe_id, topping_name, qty) VALUES
 (1, '珍珠', 2), (1, '鲜牛奶', 1),
 (2, '椰果', 2),
 (3, '红豆', 2), (3, '黑糖糖浆', 1),
 (4, '珍珠', 3), (4, '鲜牛奶', 1),
-(5, '红豆', 1), (5, '椰果', 1);
+(5, '红豆', 1), (5, '椰果', 1),
+(6, '珍珠', 1), (6, '鲜牛奶', 1),
+(7, '椰果', 1);
 
 -- 会员：1~6 为原始会员；7 已并入 1；8 与 2 合并后已撤销（恢复有效）；
 -- 9 是 3 的重复档（待处理合并）；10 是 4 的重复档（同号 + 积分流水不平，冲突待处理）。

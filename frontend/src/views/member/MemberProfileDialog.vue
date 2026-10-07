@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { formatMoney } from '../../utils/money'
 
 const props = defineProps({
   modelValue: Boolean,
@@ -98,7 +99,9 @@ const ledgerType = (t) => {
       <div class="section-title">历史订单（{{ data.orders.length }}）</div>
       <el-table :data="data.orders" border size="small" max-height="220" class="block">
         <el-table-column prop="id" label="订单#" width="80" />
-        <el-table-column prop="total" label="金额" width="90" />
+        <el-table-column label="金额" width="90">
+          <template #default="{ row }">¥{{ formatMoney(row.total) }}</template>
+        </el-table-column>
         <el-table-column prop="payType" label="支付" width="90" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
